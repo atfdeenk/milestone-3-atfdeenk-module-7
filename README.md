@@ -199,6 +199,37 @@ Authorization: Bearer <your-token>
 
 The application uses PostgreSQL as its database. The database is automatically created and configured when you start the application using Docker Compose.
 
+## Deployment
+
+The API is deployed on Render and can be accessed at: [RevoBank API](https://revobank-api.onrender.com)
+
+### Deployment Instructions
+
+1. Fork or clone this repository to your GitHub account
+
+2. Create a new Web Service on Render:
+   - Connect your GitHub repository
+   - Choose the Python environment
+   - Set the following environment variables:
+     ```
+     FLASK_APP=app.py
+     FLASK_ENV=production
+     SECRET_KEY=<your-secret-key>
+     JWT_SECRET_KEY=<your-jwt-secret-key>
+     ```
+   - The database URL will be automatically configured by Render
+
+3. Deploy:
+   - Render will automatically deploy your application
+   - Any new commits to the main branch will trigger automatic deployments
+
+### Production Considerations
+
+- The API uses gunicorn as the production WSGI server
+- Database migrations will run automatically during deployment
+- CORS is configured to allow requests from specified origins
+- All sensitive data is stored in environment variables
+
 Default credentials (for development):
 - Database: revobank
 - Username: revobank

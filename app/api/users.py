@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
-from app.models import User
+from app.models import User, Account
 from app import db
 from email_validator import validate_email, EmailNotValidError
 
@@ -41,18 +41,49 @@ def create_user():
     db.session.commit()
     
     # Generate access token
-    access_token = create_access_token(identity=user.id)
+    access_token = create_access_token(identity=str(user.id))
     
     return jsonify({
         'message': 'User created successfully',
         'access_token': access_token
     }), 201
 
+@bp.route('/all', methods=['GET'])
+@jwt_required()
+def get_all_users():
+    users = User.query.all()
+    return jsonify({
+        'users': [{
+            'id': user.id,
+            'email': user.email,
+            'name': user.name,
+            'created_at': user.created_at.isoformat() if user.created_at else None
+        } for user in users]
+    })
+
 @bp.route('/me', methods=['GET'])
 @jwt_required()
 def get_user_profile():
-    current_user_id = get_jwt_identity()
-    user = User.query.get_or_404(current_user_id)
+    try:
+        current_user_id = int(get_jwt_identity())
+    except:
+        return jsonify({
+            'error': 'Authentication failed',
+            'details': 'Invalid token format'
+        }), 401
+        
+    if not current_user_id:
+        return jsonify({
+            'error': 'Authentication failed',
+            'details': 'Invalid or expired token'
+        }), 401
+        
+    user = User.query.get(current_user_id)
+    if not user:
+        return jsonify({
+            'error': 'User not found',
+            'details': 'Your account could not be found'
+        }), 404
     
     return jsonify({
         'id': user.id,
@@ -65,11 +96,14 @@ def get_user_profile():
 @jwt_required()
 def update_user_profile():
     try:
-        current_user_id = get_jwt_identity()
-        if not current_user_id:
-            return jsonify({'error': 'Invalid or missing token'}), 401
-            
-        user = User.query.get_or_404(current_user_id)
+        current_user_id = int(get_jwt_identity())
+        user = User.query.get(current_user_id)
+        
+        if not user:
+            return jsonify({
+                'error': 'User not found',
+                'details': 'Your account could not be found'
+            }), 404
         
         try:
             data = request.get_json()
@@ -143,8 +177,99 @@ def login():
             'user': {
                 'id': user.id,
                 'email': user.email,
-                'name': user.name
+                'name': user.name,
+                'created_at': user.created_at.isoformat()
             }
         })
     
     return jsonify({'error': 'Invalid email or password'}), 401
+
+@bp.route('/forgot-password', methods=['POST'])
+def forgot_password():
+    data = request.get_json()
+    
+    if not data or 'email' not in data:
+        return jsonify({'error': 'Email is required'}), 400
+    
+    user = User.query.filter_by(email=data['email']).first()
+    if not user:
+        # For security, don't reveal if email exists
+        return jsonify({'message': 'If your email is registered, you will receive a password reset link'}), 200
+    
+    # Generate a reset token (in real app, send via email)
+    reset_token = create_access_token(identity=str(user.id), expires_delta=timedelta(hours=1))
+    
+    return jsonify({
+        'message': 'Password reset instructions sent',
+        'temp_token': reset_token  # In production, this should be sent via email
+    }), 200
+
+@bp.route('/reset-password', methods=['POST'])
+def reset_password():
+    data = request.get_json()
+    
+    if not data or 'token' not in data or 'new_password' not in data:
+        return jsonify({'error': 'Token and new password are required'}), 400
+    
+    try:
+        # Verify the reset token
+        user_id = get_jwt_identity(data['token'])
+        user = User.query.get(user_id)
+        
+        if not user:
+            return jsonify({'error': 'Invalid token'}), 400
+        
+        # Update password
+        user.set_password(data['new_password'])
+        db.session.commit()
+        
+        return jsonify({'message': 'Password reset successful'}), 200
+        
+    except Exception as e:
+        return jsonify({'error': 'Invalid or expired token'}), 400
+
+@bp.route('/me', methods=['DELETE'])
+@jwt_required()
+def delete_user():
+    try:
+        current_user_id = int(get_jwt_identity())
+    except:
+        return jsonify({
+            'error': 'Authentication failed',
+            'details': 'Invalid token format'
+        }), 401
+        
+    if not current_user_id:
+        return jsonify({
+            'error': 'Authentication failed',
+            'details': 'Invalid or expired token'
+        }), 401
+        
+    try:
+        # Check if user exists
+        user = User.query.get(current_user_id)
+        if not user:
+            return jsonify({
+                'error': 'User not found',
+                'details': 'Your account could not be found'
+            }), 404
+            
+        # Delete all associated accounts (this will cascade delete transactions)
+        accounts = Account.query.filter_by(user_id=current_user_id).all()
+        for account in accounts:
+            db.session.delete(account)
+        
+        # Delete the user
+        db.session.delete(user)
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Your account and all associated data have been deleted successfully'
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'error': 'Error deleting account',
+            'details': str(e)
+        }), 400
